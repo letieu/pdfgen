@@ -80,11 +80,19 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
 
     const html = req.file.buffer.toString('utf-8');
     let page;
+    let slotAcquired = false;
 
     try {
         // Wait for available slot before creating new page
         await acquireSlot();
+        slotAcquired = true;
         console.log(`Processing PDF (active: ${activeTasks}, queued: ${taskQueue.length})`);
+        
+        // Check if client is still connected after waiting in queue
+        if (req.aborted || res.writableEnded) {
+            console.log('Client disconnected while waiting in queue');
+            return;
+        }
         
         page = await browserInstance.newPage();
         
@@ -95,6 +103,12 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
             timeout: 30000
         });
         
+        // Check if client is still connected after loading content
+        if (req.aborted || res.writableEnded) {
+            console.log('Client disconnected during page load');
+            return;
+        }
+        
         // Wait for fonts to be ready (important for Vietnamese characters)
         await page.evaluateHandle('document.fonts.ready');
 
@@ -103,18 +117,31 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
             format: 'A4',
         });
 
+        // Check if client is still connected before sending response
+        if (req.aborted || res.writableEnded) {
+            console.log('Client disconnected before sending PDF');
+            return;
+        }
+
         res.header(corsHeaders);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', 'attachment; filename=result.pdf');
         res.send(pdf);
     } catch (error) {
-        console.error('An error occurred while generating the PDF:', error);
-        res.status(500).send('An error occurred while generating the PDF.');
+        // Only send error response if client is still connected
+        if (!req.aborted && !res.writableEnded) {
+            console.error('An error occurred while generating the PDF:', error);
+            res.status(500).send('An error occurred while generating the PDF.');
+        } else {
+            console.log('Client disconnected, error during processing:', error.message);
+        }
     } finally {
         if (page) {
-            await page.close();
+            await page.close().catch(err => console.error('Error closing page:', err));
         }
-        releaseSlot();
+        if (slotAcquired) {
+            releaseSlot();
+        }
     }
 });
 
