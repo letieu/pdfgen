@@ -1,29 +1,39 @@
-# Use an arm64-compatible Node.js base image
-FROM --platform=linux/arm64 node:18-slim
+# ---- Base Stage ----
+# Use a Node.js version that includes pnpm
+FROM node:18-slim AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
 
-# Install dependencies for Puppeteer
-RUN apt-get update && apt-get install -y \
+WORKDIR /app
+
+# ---- Dependencies Stage ----
+FROM base AS dependencies
+COPY package.json pnpm-lock.yaml ./
+# This is less efficient than --mount but works without BuildKit
+RUN pnpm install --prod --frozen-lockfile
+
+# ---- Production Stage ----
+FROM base AS production
+
+# Install dependencies required for Puppeteer
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
-    libc6 \
     libcairo2 \
     libcups2 \
     libdbus-1-3 \
     libexpat1 \
     libfontconfig1 \
     libgbm1 \
-    libgcc1 \
     libglib2.0-0 \
-    libgdk-pixbuf2.0-0 \
     libgtk-3-0 \
     libnspr4 \
     libnss3 \
     libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libstdc++6 \
     libx11-6 \
     libx11-xcb1 \
     libxcb1 \
@@ -39,23 +49,14 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     lsb-release \
     wget \
-    xdg-utils \
-    --no-install-recommends
+    xdg-utils && \
+    rm -rf /var/lib/apt/lists/*
 
-# Set up the working directory
-WORKDIR /app
+# Copy dependencies from the 'dependencies' stage
+COPY --from=dependencies /app/node_modules ./node_modules
+# Copy application source code
+COPY src ./src
 
-# Copy package.json and package-lock.json
-COPY package*.json ./
-
-# Install dependencies
-RUN npm install
-
-# Copy the rest of the application files
-COPY . .
-
-# Expose the port the app runs on
-EXPOSE 3000
-
-# Run the application
-CMD ["npm", "start"]
+EXPOSE 3001
+USER node
+CMD [ "node", "src/index.js" ]
