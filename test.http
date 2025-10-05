@@ -1,4 +1,18 @@
 POST http://localhost:3001/generate-pdf
-Content-Type: application/x-www-form-urlencoded
+Content-Type: multipart/form-data; boundary=boundary
 
-html=<!DOCTYPE html><html><head><title>Test PDF</title></head><body><h1>Hello from form post!</h1><p>This is a test.</p></body></html>
+--boundary
+Content-Disposition: form-data; name="html"; filename="example.html"
+Content-Type: text/html
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Uploaded HTML</title>
+</head>
+<body>
+    <h1>This HTML was uploaded as a file!</h1>
+</body>
+</html>
+
+--boundary--

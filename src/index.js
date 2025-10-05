@@ -1,18 +1,27 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
+const multer = require('multer');
 
 const app = express();
 const port = 3001;
 
-// Middleware to parse urlencoded bodies
-app.use(express.urlencoded({ extended: true }));
+// Configure multer for single file upload in memory
+const upload = multer({ storage: multer.memoryStorage() });
+const uploadFieldName = 'html';
 
-app.post('/generate-pdf', async (req, res) => {
-    let html = req.body.html;
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+};
 
-    if (!html) {
-        return res.status(400).send('HTML content is missing from the request body.');
+app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).send('No HTML file was uploaded.');
     }
+
+    // Get HTML content from the uploaded file's buffer
+    const html = req.file.buffer.toString('utf-8');
 
     let browser;
     try {
@@ -29,6 +38,7 @@ app.post('/generate-pdf', async (req, res) => {
             format: 'A4',
         });
 
+			  res.header(corsHeaders);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', 'attachment; filename=result.pdf');
         res.send(pdf);
