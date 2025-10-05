@@ -49,7 +49,10 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
 
     try {
         page = await browserInstance.newPage();
-        await page.setContent(html, { waitUntil: 'networkidle0' });
+        await page.setContent(html, { 
+            waitUntil: 'networkidle0',
+            timeout: 60000 // 60 seconds timeout
+        });
 
         const pdf = await page.pdf({
             printBackground: true,
