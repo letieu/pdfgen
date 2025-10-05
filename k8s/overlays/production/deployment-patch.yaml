@@ -1,0 +1,11 @@
+# This patch file is used to specify the production container image.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdf-worker-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: pdf-worker
+        image: ghcr.io/letieu/pdfgen:e2816f392bef04f19bce45fb89f40404d0246d3b

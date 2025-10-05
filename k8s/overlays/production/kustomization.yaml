@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+bases:
+  - ../../base
+
+# The patchesStrategicMerge field is used to apply partial YAML files (patches)
+# to the resources loaded from the base. 
+patchesStrategicMerge:
+  - deployment-patch.yaml
