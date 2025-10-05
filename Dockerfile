@@ -49,6 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     xdg-utils \
     chromium \
+    ttf-mscorefonts-installer \
     && rm -rf /var/lib/apt/lists/*
 
 # Tell Puppeteer to use system Chromium
