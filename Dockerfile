@@ -16,7 +16,7 @@ FROM base AS production
 
 # Install Chromium + Puppeteer dependencies
 RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections && \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     fonts-liberation \
     libasound2 \
