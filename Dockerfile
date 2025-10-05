@@ -6,13 +6,9 @@ RUN corepack enable
 
 WORKDIR /app
 
-# ---- Dependencies Stage ----
-FROM base AS dependencies
-COPY package.json pnpm-lock.yaml .npmrc ./
-RUN pnpm install --prod --frozen-lockfile
-
-# ---- Production Stage ----
-FROM base AS production
+# ---- System Dependencies Stage ----
+# This stage is cached unless system packages change
+FROM base AS system-deps
 
 # Install Chromium + Puppeteer dependencies + Vietnamese fonts
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -55,6 +51,14 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     chromium \
     && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
+
+# ---- Dependencies Stage ----
+FROM system-deps AS dependencies
+COPY package.json pnpm-lock.yaml .npmrc ./
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --prod --frozen-lockfile
+
+# ---- Production Stage ----
+FROM system-deps AS production
 
 # Tell Puppeteer to use system Chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
