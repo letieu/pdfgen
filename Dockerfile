@@ -1,5 +1,4 @@
 # ---- Base Stage ----
-# Use a Node.js version that includes pnpm
 FROM node:18-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -10,13 +9,12 @@ WORKDIR /app
 # ---- Dependencies Stage ----
 FROM base AS dependencies
 COPY package.json pnpm-lock.yaml .npmrc ./
-# This is less efficient than --mount but works without BuildKit
 RUN pnpm install --prod --frozen-lockfile
 
 # ---- Production Stage ----
 FROM base AS production
 
-# Install dependencies required for Puppeteer
+# Install Chromium + Puppeteer dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     fonts-liberation \
@@ -49,14 +47,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst6 \
     lsb-release \
     wget \
-    xdg-utils && \
-    rm -rf /var/lib/apt/lists/*
+    xdg-utils \
+    chromium \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy dependencies from the 'dependencies' stage
+# Tell Puppeteer to use system Chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Copy dependencies and source code
 COPY --from=dependencies /app/node_modules ./node_modules
-# Copy application source code
 COPY src ./src
 
 EXPOSE 3001
 USER node
-CMD [ "node", "src/index.js" ]
+CMD ["node", "src/index.js"]
