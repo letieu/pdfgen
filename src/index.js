@@ -137,7 +137,17 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
         }
     } finally {
         if (page) {
-            await page.close().catch(err => console.error('Error closing page:', err));
+            try {
+                // Check if page is still open before trying to close it
+                if (!page.isClosed()) {
+                    await page.close();
+                }
+            } catch (err) {
+                // Silently ignore errors when page is already closed or browser disconnected
+                if (err.message && !err.message.includes('closed') && !err.message.includes('Protocol error')) {
+                    console.error('Error closing page:', err);
+                }
+            }
         }
         if (slotAcquired) {
             releaseSlot();
