@@ -9,7 +9,7 @@ WORKDIR /app
 
 # ---- Dependencies Stage ----
 FROM base AS dependencies
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml .npmrc ./
 # This is less efficient than --mount but works without BuildKit
 RUN pnpm install --prod --frozen-lockfile
 
