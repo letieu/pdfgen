@@ -14,11 +14,15 @@ RUN pnpm install --prod --frozen-lockfile
 # ---- Production Stage ----
 FROM base AS production
 
-# Install Chromium + Puppeteer dependencies
+# Install Chromium + Puppeteer dependencies + Vietnamese fonts
 RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections && \
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     fonts-liberation \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
+    fonts-dejavu-core \
+    fonts-freefont-ttf \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -51,6 +55,7 @@ RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula sele
     xdg-utils \
     chromium \
     ttf-mscorefonts-installer \
+    && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
 
 # Tell Puppeteer to use system Chromium
