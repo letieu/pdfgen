@@ -17,12 +17,46 @@ const corsHeaders = {
 
 let browserInstance;
 
+// Concurrency control: limit simultaneous PDF generation
+const MAX_CONCURRENT_PAGES = 5; // Adjust based on your server capacity
+let activeTasks = 0;
+const taskQueue = [];
+
+async function acquireSlot() {
+    if (activeTasks < MAX_CONCURRENT_PAGES) {
+        activeTasks++;
+        return Promise.resolve();
+    }
+    
+    // Wait in queue
+    return new Promise((resolve) => {
+        taskQueue.push(resolve);
+    });
+}
+
+function releaseSlot() {
+    activeTasks--;
+    if (taskQueue.length > 0) {
+        const nextTask = taskQueue.shift();
+        activeTasks++;
+        nextTask();
+    }
+}
+
 async function startBrowser() {
     console.log('Starting browser instance...');
     try {
         browserInstance = await puppeteer.launch({
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage', // Overcome limited resource problems
+                '--disable-gpu',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process', // Run in single process mode for better stability
+            ]
         });
         browserInstance.on('disconnected', () => {
             console.log('Browser disconnected. Attempting to restart...');
@@ -48,11 +82,21 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
     let page;
 
     try {
+        // Wait for available slot before creating new page
+        await acquireSlot();
+        console.log(`Processing PDF (active: ${activeTasks}, queued: ${taskQueue.length})`);
+        
         page = await browserInstance.newPage();
+        
+        // Use 'load' instead of 'networkidle0' to avoid hanging on slow/failed network requests
+        // 'load' waits for DOM and resources but doesn't wait for network to be completely idle
         await page.setContent(html, { 
-            waitUntil: 'networkidle0',
-            timeout: 60000 // 60 seconds timeout
+            waitUntil: 'load',
+            timeout: 30000
         });
+        
+        // Wait for fonts to be ready (important for Vietnamese characters)
+        await page.evaluateHandle('document.fonts.ready');
 
         const pdf = await page.pdf({
             printBackground: true,
@@ -70,6 +114,7 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
         if (page) {
             await page.close();
         }
+        releaseSlot();
     }
 });
 
