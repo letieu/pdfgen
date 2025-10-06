@@ -15,16 +15,31 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-let browserInstance;
-let browserReady = false;
-
 // Concurrency control: limit simultaneous PDF generation
-const MAX_CONCURRENT_PAGES = 5; // Adjust based on your server capacity
+const MAX_CONCURRENT_TASKS = 3; // Reduce concurrent tasks since each gets its own browser
 let activeTasks = 0;
 const taskQueue = [];
 
+// Browser launch configuration
+const BROWSER_CONFIG = {
+    headless: 'new', // Use new headless mode
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+    ],
+    protocolTimeout: 120000, // 2 minutes timeout
+};
+
 async function acquireSlot() {
-    if (activeTasks < MAX_CONCURRENT_PAGES) {
+    if (activeTasks < MAX_CONCURRENT_TASKS) {
         activeTasks++;
         return Promise.resolve();
     }
@@ -44,60 +59,24 @@ function releaseSlot() {
     }
 }
 
-async function startBrowser() {
-    console.log('Starting browser instance...');
-    browserReady = false;
-    try {
-        browserInstance = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage', // Overcome limited resource problems
-                '--disable-gpu',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process', // Run in single process mode for better stability
-                '--disable-background-timer-throttling', // Prevent throttling of background tabs
-                '--disable-backgrounding-occluded-windows',
-                '--disable-renderer-backgrounding',
-            ],
-            protocolTimeout: 60000, // Increase protocol timeout to 60 seconds
-        });
-        browserInstance.on('disconnected', () => {
-            console.log('Browser disconnected. Attempting to restart...');
-            browserReady = false;
-            startBrowser();
-        });
-        
-        // Verify browser is actually ready by creating and closing a test page
-        const testPage = await browserInstance.newPage();
-        await testPage.close();
-        
-        browserReady = true;
-        console.log('Browser instance started successfully and is ready.');
-    } catch (error) {
-        console.error('Could not start browser.', error);
-        browserReady = false;
-        // Exit if the browser can't be started, as the app is useless without it.
-        process.exit(1);
-    }
+async function createBrowserInstance() {
+    console.log('Launching new browser instance...');
+    const browser = await puppeteer.launch(BROWSER_CONFIG);
+    return browser;
 }
 
 app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
     if (!req.file) {
         return res.status(400).send('No HTML file was uploaded.');
     }
-    if (!browserInstance || !browserReady) {
-        return res.status(503).send('Browser service is not ready. Please try again later.');
-    }
 
     const html = req.file.buffer.toString('utf-8');
-    let page;
+    let browser = null;
+    let page = null;
     let slotAcquired = false;
 
     try {
-        // Wait for available slot before creating new page
+        // Wait for available slot before creating new browser
         await acquireSlot();
         slotAcquired = true;
         console.log(`Processing PDF (active: ${activeTasks}, queued: ${taskQueue.length})`);
@@ -108,76 +87,48 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
             return;
         }
         
-        // Retry logic for page creation to handle browser warm-up after inactivity
-        let retries = 2;
-        let lastError;
-        while (retries > 0) {
-            try {
-                page = await browserInstance.newPage();
-                
-                // Set a longer default timeout for the page
-                page.setDefaultTimeout(60000);
-                
-                // Use 'load' instead of 'networkidle0' to avoid hanging on slow/failed network requests
-                // 'load' waits for DOM and resources but doesn't wait for network to be completely idle
-                await page.setContent(html, { 
-                    waitUntil: 'load',
-                    timeout: 30000
-                });
-                
-                // Check if client is still connected after loading content
-                if (req.aborted || res.writableEnded) {
-                    console.log('Client disconnected during page load');
-                    return;
-                }
-                
-                // Wait for fonts to be ready (important for Vietnamese characters)
-                await page.evaluateHandle('document.fonts.ready');
-
-                const pdf = await page.pdf({
-                    printBackground: true,
-                    format: 'A4',
-                    timeout: 60000,
-                });
-
-                // Check if client is still connected before sending response
-                if (req.aborted || res.writableEnded) {
-                    console.log('Client disconnected before sending PDF');
-                    return;
-                }
-
-                res.header(corsHeaders);
-                res.setHeader('Content-Type', 'application/pdf');
-                res.setHeader('Content-Disposition', 'attachment; filename=result.pdf');
-                res.send(pdf);
-                
-                // Success - break out of retry loop
-                break;
-            } catch (err) {
-                lastError = err;
-                retries--;
-                
-                // Close the page if it was created
-                if (page && !page.isClosed()) {
-                    try {
-                        await page.close();
-                    } catch (closeErr) {
-                        // Ignore close errors
-                    }
-                    page = null;
-                }
-                
-                // If it's a Target closed error and we have retries left, wait and retry
-                if (retries > 0 && (err.message.includes('Target closed') || err.message.includes('Protocol error'))) {
-                    console.log(`Target closed error, retrying... (${retries} attempts left)`);
-                    // Wait a bit before retrying to let browser stabilize
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                } else {
-                    // Re-throw if no retries left or different error
-                    throw lastError;
-                }
-            }
+        // Create a fresh browser instance for this request
+        browser = await createBrowserInstance();
+        
+        // Create page and generate PDF
+        page = await browser.newPage();
+        
+        // Set a longer default timeout for the page
+        page.setDefaultTimeout(60000);
+        
+        // Use 'load' instead of 'networkidle0' to avoid hanging on slow/failed network requests
+        await page.setContent(html, { 
+            waitUntil: 'load',
+            timeout: 30000
+        });
+        
+        // Check if client is still connected after loading content
+        if (req.aborted || res.writableEnded) {
+            console.log('Client disconnected during page load');
+            return;
         }
+        
+        // Wait for fonts to be ready (important for Vietnamese characters)
+        await page.evaluateHandle('document.fonts.ready');
+
+        const pdf = await page.pdf({
+            printBackground: true,
+            format: 'A4',
+            timeout: 60000,
+        });
+
+        // Check if client is still connected before sending response
+        if (req.aborted || res.writableEnded) {
+            console.log('Client disconnected before sending PDF');
+            return;
+        }
+
+        res.header(corsHeaders);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename=result.pdf');
+        res.send(pdf);
+        
+        console.log('PDF generated successfully');
     } catch (error) {
         // Only send error response if client is still connected
         if (!req.aborted && !res.writableEnded) {
@@ -187,19 +138,24 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
             console.log('Client disconnected, error during processing:', error.message);
         }
     } finally {
-        if (page) {
-            try {
-                // Check if page is still open before trying to close it
-                if (!page.isClosed()) {
-                    await page.close();
-                }
-            } catch (err) {
-                // Silently ignore errors when page is already closed or browser disconnected
-                if (err.message && !err.message.includes('closed') && !err.message.includes('Protocol error')) {
-                    console.error('Error closing page:', err);
-                }
+        // Always clean up resources
+        try {
+            if (page && !page.isClosed()) {
+                await page.close();
             }
+        } catch (err) {
+            console.error('Error closing page:', err.message);
         }
+        
+        try {
+            if (browser) {
+                await browser.close();
+                console.log('Browser instance closed');
+            }
+        } catch (err) {
+            console.error('Error closing browser:', err.message);
+        }
+        
         if (slotAcquired) {
             releaseSlot();
         }
@@ -207,17 +163,14 @@ app.post('/generate-pdf', upload.single(uploadFieldName), async (req, res) => {
 });
 
 async function main() {
-    await startBrowser();
     app.listen(port, () => {
         console.log(`PDF generator service listening at http://localhost:${port}`);
+        console.log('Using fresh browser instance per request approach');
     });
 }
 
 async function cleanup() {
-    console.log('Closing browser instance...');
-    if (browserInstance) {
-        await browserInstance.close();
-    }
+    console.log('Shutting down server...');
     process.exit(0);
 }
 
